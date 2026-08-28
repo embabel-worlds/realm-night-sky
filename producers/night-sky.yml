@@ -1,0 +1,162 @@
+# Every producer here is keyed on a COORDINATE PAIR — the composite-key join.
+# The engine composes latitude+longitude into one key per anchor; `keyArgs`
+# splits it back into whatever that particular source calls its two coordinate
+# parameters (they disagree: latitude/longitude, lat/lng, lat/lon); `echoKeyAs`
+# stamps the key onto every record, which is what each join's
+# `recordKeyField: key` links on.
+#
+# Caches are sized to what each source actually changes at. Twilight and moon
+# geometry are fixed for the day, so they hold for six hours. Cloud is a
+# forecast that updates hourly. Kp is issued three-hourly. ISS elements are
+# refreshed a few times a day and the predictions barely move between.
+
+# Astronomical twilight. NOTE `lng` — this source spells longitude differently
+# from the other four, which is exactly what keyArgs is for.
+- name: darkWindow
+  kind: remote
+  operation: twilightToday
+  records: "$.results"
+  keyArgs: [lat, lng]
+  echoKeyAs: key
+  maxKeysPerCall: 1
+  args:
+    formatted: "0"
+  project:
+    sunset: sunset
+    sunrise: sunrise
+    solarNoon: solar_noon
+    dayLengthSeconds: day_length
+    civilDusk: civil_twilight_end
+    nauticalDusk: nautical_twilight_end
+    astroDusk: astronomical_twilight_end
+    astroDawn: astronomical_twilight_begin
+  cache: { kind: ttl, seconds: 21600 }
+
+# The SAME fetch for yesterday's UTC date. Not redundancy: sunrise-sunset.org
+# answers for a UTC calendar date, and for every place west of Greenwich the
+# night you are actually standing in opens on the PREVIOUS UTC date. Fetching
+# both candidate nights and letting the view pick by the place's own local date
+# is what keeps the darkness window and the cloud hours talking about the same
+# night. `date` accepts the literal string `yesterday`.
+- name: darkWindowPrior
+  kind: remote
+  operation: twilightToday
+  records: "$.results"
+  keyArgs: [lat, lng]
+  echoKeyAs: key
+  maxKeysPerCall: 1
+  args:
+    formatted: "0"
+    date: yesterday
+  project:
+    sunset: sunset
+    sunrise: sunrise
+    solarNoon: solar_noon
+    dayLengthSeconds: day_length
+    civilDusk: civil_twilight_end
+    nauticalDusk: nautical_twilight_end
+    astroDusk: astronomical_twilight_end
+    astroDawn: astronomical_twilight_begin
+  cache: { kind: ttl, seconds: 21600 }
+
+# The moon. `date` is deliberately NOT passed: omitted, MET Norway answers for
+# today, and a producer's arguments are static, so a source that demanded a
+# date could not be asked about tonight at all.
+- name: moonTonight
+  kind: remote
+  operation: moonToday
+  records: "$.properties"
+  keyArgs: [lat, lon]
+  echoKeyAs: key
+  maxKeysPerCall: 1
+  project:
+    phaseDegrees: moonphase
+    moonrise: moonrise.time
+    moonriseAzimuth: moonrise.azimuth
+    moonset: moonset.time
+    moonsetAzimuth: moonset.azimuth
+    highMoonTime: high_moon.time
+    highMoonElevation: high_moon.disc_centre_elevation
+  cache: { kind: ttl, seconds: 21600 }
+
+# Cloud through the dark hours. `timezone: auto` is load-bearing, not tidiness:
+# it makes Open-Meteo's hourly arrays start at LOCAL midnight, so index 21 is
+# 21:00 tonight in Sydney and in York alike. With a fixed timezone the same
+# index would mean a different hour at every place and these nine projections
+# would be nine different questions.
+- name: nightCloudHours
+  kind: remote
+  operation: nightCloud
+  records: "$"
+  keyArgs: [latitude, longitude]
+  echoKeyAs: key
+  maxKeysPerCall: 1
+  args:
+    hourly: "cloud_cover,visibility"
+    forecast_days: "3"
+    timezone: auto
+    cell_selection: nearest
+  project:
+    timezone: timezone
+    utcOffsetSeconds: utc_offset_seconds
+    localDayStart: hourly.time.0
+    cloudAt20: hourly.cloud_cover.20
+    cloudAt21: hourly.cloud_cover.21
+    cloudAt22: hourly.cloud_cover.22
+    cloudAt23: hourly.cloud_cover.23
+    cloudAt00: hourly.cloud_cover.24
+    cloudAt01: hourly.cloud_cover.25
+    cloudAt02: hourly.cloud_cover.26
+    cloudAt03: hourly.cloud_cover.27
+    cloudAt04: hourly.cloud_cover.28
+    visibilityAt22: hourly.visibility.22
+  cache: { kind: ttl, seconds: 3600 }
+
+# ISS passes. The coordinates are PATH segments here rather than query
+# parameters; keyArgs names the parameters, and where the spec puts them is the
+# spec's business.
+#
+# G7VRD allows TEN requests a minute and says so with a 429, which arrives as a
+# PRODUCER_ERROR and drops that place's passes. Declaring the real limit lets the
+# planner pace against it rather than over-call. When it is exceeded anyway, the
+# affected place comes back with a PRODUCER_ERROR warning and the rest of the sky
+# still answers — which is why there is no maxAnchors here. Capping the anchors
+# was tried: it refuses the whole query instead of answering most of it, and a
+# partial answer that says it is partial beats no answer at all. The three-hour
+# cache is what keeps this rare: TLEs refresh a few times a day and the
+# predictions hardly move between.
+- name: issPasses
+  kind: remote
+  operation: issPasses
+  records: "$.passes[*]"
+  keyArgs: [lat, lon]
+  echoKeyAs: key
+  maxKeysPerCall: 1
+  cost: { rate: "10/minute" }
+  args:
+    hours: "48"
+    min_elevation: "30"
+  project:
+    start: start
+    tca: tca
+    endsAt: end
+    maxElevation: max_elevation
+    aosAzimuth: aos_azimuth
+    losAzimuth: los_azimuth
+  cache: { kind: ttl, seconds: 10800 }
+
+# The planetary K index. The feed is global and takes no parameters at all, so
+# there is nothing for the key to fill — `keyArgs` is absent and `echoKeyAs`
+# alone does the work, stamping each anchor's key onto the rows so the same
+# global forecast can be judged against each place's latitude.
+- name: kpForecast
+  kind: remote
+  operation: kpForecast
+  records: "$[*]"
+  echoKeyAs: key
+  project:
+    timeTag: time_tag
+    kp: kp
+    observed: observed
+    noaaScale: noaa_scale
+  cache: { kind: ttl, seconds: 3600 }

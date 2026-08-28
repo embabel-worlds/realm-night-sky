@@ -1,0 +1,31 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Open-Meteo Forecast (night sky)",
+    "version": "1.0.0",
+    "description": "Open-Meteo's free, keyless forecast, requested for one purpose: cloud cover hour by hour through tonight. With `timezone=auto` the hourly arrays start at LOCAL 00:00 today, so array index N is local hour N — the same index means the same local hour at every place on earth, which is what lets a producer project 'cloud at 22:00 tonight' as a fixed path."
+  },
+  "servers": [{ "url": "https://api.open-meteo.com" }],
+  "paths": {
+    "/v1/forecast": {
+      "get": {
+        "operationId": "nightCloud",
+        "summary": "Hourly cloud cover and visibility for a coordinate pair, indexed by local hour",
+        "description": "Returns parallel arrays under `hourly` — `time[]`, `cloud_cover[]` (percent) and `visibility[]` (metres). With `timezone=auto` and `forecast_days=2`, index 0 is local 00:00 today and index 47 is local 23:00 tomorrow; indices 20-28 are tonight 20:00 through tomorrow 04:00.",
+        "parameters": [
+          { "name": "latitude", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Latitude, decimal degrees." },
+          { "name": "longitude", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Longitude, decimal degrees." },
+          { "name": "hourly", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Comma-separated hourly variables, e.g. `cloud_cover,visibility`." },
+          { "name": "forecast_days", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Days of forecast. `2` covers tonight and the small hours." },
+          { "name": "timezone", "in": "query", "required": false, "schema": { "type": "string" }, "description": "`auto` resolves the place's own timezone, which is what makes hourly indices mean local hours." }
+        ],
+        "responses": {
+          "200": {
+            "description": "Forecast with parallel hourly arrays.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    }
+  }
+}

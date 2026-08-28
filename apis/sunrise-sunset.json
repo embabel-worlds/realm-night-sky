@@ -1,0 +1,30 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "sunrise-sunset.org",
+    "version": "1.0.0",
+    "description": "A free, keyless solar-event service. `twilightToday` returns sunrise, sunset and all three twilight boundaries — civil, nautical and ASTRONOMICAL — for a coordinate pair. Astronomical dusk is when the sky is actually dark; sunset is not. Times are UTC. NOTE the longitude parameter is spelled `lng`, not `lon`."
+  },
+  "servers": [{ "url": "https://api.sunrise-sunset.org" }],
+  "paths": {
+    "/json": {
+      "get": {
+        "operationId": "twilightToday",
+        "summary": "Sunrise, sunset and the civil/nautical/astronomical twilight boundaries for today",
+        "description": "Returns `{results: {...}, status: 'OK'}`. `results` carries `sunrise`, `sunset`, `solar_noon`, `day_length` (seconds), and `civil_`, `nautical_` and `astronomical_twilight_begin`/`_end`, all UTC ISO-8601 when `formatted=0`. The begin values are THIS MORNING and the end values are TONIGHT. A place with no astronomical night — a high latitude in summer — comes back as `1970-01-01T00:00:00+00:00`, which is the service saying 'this event does not occur here today', not an error.",
+        "parameters": [
+          { "name": "lat", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Latitude, decimal degrees." },
+          { "name": "lng", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Longitude, decimal degrees. Spelled `lng`." },
+          { "name": "formatted", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Always `0` — 0 gives ISO-8601 UTC, 1 gives unparseable prose." },
+          { "name": "date", "in": "query", "required": false, "schema": { "type": "string" }, "description": "ISO date. Omit for today." }
+        ],
+        "responses": {
+          "200": {
+            "description": "Solar events for the day.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    }
+  }
+}

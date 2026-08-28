@@ -1,0 +1,363 @@
+# The realm's answer surface. Each read fans out one producer call per place
+# per source, cached, so SkyTonight over ten places is thirty cached fetches
+# and not thirty rendered opinions.
+#
+# Two things every view here has to do, and neither is optional:
+#   * projected producer values arrive as STRINGS — arithmetic and ORDER BY go
+#     through toFloat();
+#   * moon ILLUMINATION is not a property. MET Norway gives a phase ANGLE, and
+#     illuminated fraction is (1 - cos(radians(angle))) / 2. Computing it here,
+#     once per view, is the reason no caller has to know that.
+#
+# And one thing that is not obvious at all. "Tonight" is a LOCAL idea, and the
+# twilight source answers for a UTC date, so every place reaches TWO candidate
+# nights — HAS_DARK_WINDOW (today UTC) and HAS_PRIOR_DARK_WINDOW (yesterday UTC).
+# The right one is whichever opens with a sunset falling on the place's own
+# local date, which is also the night SkyForecast's local hours cover. Taking
+# HAS_DARK_WINDOW alone looks fine from London and quietly describes the wrong
+# night from San Francisco, so every view here picks, and none of them assume.
+#
+# The moon is matched OPTIONALLY, and that is not defensive habit. MET Norway
+# rejects a longitude rendered in scientific notation, which is how a coordinate
+# within a thousandth of a degree of the Greenwich meridian used to arrive — so a
+# place AT Greenwich lost its moon while every other source answered happily.
+# That was an ENGINE defect in how a small float key is rendered and it is fixed
+# upstream; the optional match stays, because a realm cannot assume which host
+# version it is installed on, and because a source being unreachable for one place
+# is a permanent possibility rather than that one bug. Dropping
+# those places out of a ranking would be the worst possible failure: silent, and
+# shaped exactly like "nowhere good tonight". Instead the row survives, says so
+# in `moonFetchedForThisPlace`, and borrows the illuminated fraction from a place
+# that did resolve — legitimate because lunar phase is a GLOBAL quantity, varying
+# by well under a degree across the whole earth. Moonrise, which is genuinely
+# local, stays null rather than being invented.
+#
+# The score is deliberately simple and stated in the open: clear sky times
+# absence of moon, and zero when the sky never gets astronomically dark.
+# An observer can disagree with the weighting because they can see it.
+
+- name: SkyTonight
+  description: Tonight's observing conditions at each place you track the weather for — when it gets properly dark, how much moon is in the way, how cloudy it will be through the dark hours, and a 0-100 score. Best sky first.
+  params:
+    limit:
+      type: int
+      default: 10
+      description: "How many places to return, best sky first."
+  cypher: |
+    MATCH (l:WeatherLocation)-[:HAS_DARK_WINDOW]->(dToday:DarkWindow)
+    MATCH (l)-[:HAS_PRIOR_DARK_WINDOW]->(dPrior:DarkWindow)
+    MATCH (l)-[:HAS_SKY_FORECAST]->(f:SkyForecast)
+    OPTIONAL MATCH (l)-[:HAS_MOON]->(m:MoonTonight)
+    WITH l, m, f, duration({seconds: toInteger(f.utcOffsetSeconds)}) AS off, dToday, dPrior
+    WITH l, m, f, off,
+         CASE WHEN date(datetime(dPrior.sunset) + off) = date(datetime() + off)
+              THEN dPrior ELSE dToday END AS d
+    WITH l, d, m, f, off,
+         CASE WHEN m IS NULL THEN NULL
+              ELSE (1.0 - cos(radians(toFloat(m.phaseDegrees)))) / 2.0 END AS rowIllum,
+         (toFloat(f.cloudAt21) + toFloat(f.cloudAt22) + toFloat(f.cloudAt23) +
+          toFloat(f.cloudAt00) + toFloat(f.cloudAt01) + toFloat(f.cloudAt02) +
+          toFloat(f.cloudAt03)) / 7.0 AS meanCloud,
+         NOT d.astroDusk STARTS WITH '1970' AS trulyDark
+    WITH collect({p: l, d: d, m: m, f: f, off: off, rowIllum: rowIllum,
+                  meanCloud: meanCloud, trulyDark: trulyDark}) AS rows
+    WITH rows, reduce(x = NULL, r IN rows | coalesce(x, r.rowIllum)) AS globalIllum
+    UNWIND rows AS r
+    WITH r.p AS l, r.d AS d, r.m AS m, r.f AS f, r.off AS off,
+         r.meanCloud AS meanCloud, r.trulyDark AS trulyDark,
+         r.rowIllum IS NOT NULL AS moonKnownHere,
+         coalesce(r.rowIllum, globalIllum) AS illum
+    WITH l, d, m, f, off, meanCloud, trulyDark, moonKnownHere, illum,
+         round(100.0 * ((100.0 - meanCloud) / 100.0)
+                     * (1.0 - 0.65 * coalesce(illum, 0.0))
+                     * (CASE WHEN trulyDark THEN 1.0 ELSE 0.35 END)) AS score,
+         CASE WHEN trulyDark THEN datetime(d.astroDusk) ELSE datetime(d.nauticalDusk) END AS darkFrom,
+         datetime(d.astroDawn) + duration({days: 1}) AS darkUntil
+    RETURN l.name AS place,
+           score,
+           CASE WHEN NOT trulyDark THEN 'no astronomical night here tonight'
+                WHEN score >= 70 THEN 'excellent'
+                WHEN score >= 45 THEN 'worth going out'
+                WHEN score >= 20 THEN 'marginal'
+                ELSE 'stay in' END AS verdict,
+           round(meanCloud) AS meanCloudPct,
+           round(100.0 * illum) AS moonIlluminatedPct,
+           moonKnownHere AS moonFetchedForThisPlace,
+           toString(date(datetime(d.sunset) + off)) AS nightOfLocalDate,
+           substring(toString(darkFrom + off), 0, 16) AS darkFromLocal,
+           substring(toString(darkUntil + off), 0, 16) AS darkUntilLocal,
+           round(duration.inSeconds(darkFrom, darkUntil).seconds / 360.0) / 10.0 AS darkHours,
+           substring(toString(datetime(d.sunset) + off), 0, 16) AS sunsetLocal,
+           CASE WHEN m IS NULL THEN NULL
+                ELSE substring(toString(datetime(m.moonrise) + off), 0, 16) END AS moonriseLocal,
+           f.timezone AS timezone
+    ORDER BY score DESC, meanCloudPct ASC
+    LIMIT $limit
+- name: UkSkyTonight
+  description: Tonight's observing conditions at each UK place you watch — darkness, moon, cloud and a 0-100 score, best sky first. The same answer as SkyTonight over the UkPlace anchor instead of WeatherLocation.
+  params:
+    limit:
+      type: int
+      default: 10
+      description: "How many places to return, best sky first."
+  cypher: |
+    MATCH (p:UkPlace)-[:HAS_DARK_WINDOW]->(dToday:DarkWindow)
+    MATCH (p)-[:HAS_PRIOR_DARK_WINDOW]->(dPrior:DarkWindow)
+    MATCH (p)-[:HAS_SKY_FORECAST]->(f:SkyForecast)
+    OPTIONAL MATCH (p)-[:HAS_MOON]->(m:MoonTonight)
+    WITH p, m, f, duration({seconds: toInteger(f.utcOffsetSeconds)}) AS off, dToday, dPrior
+    WITH p, m, f, off,
+         CASE WHEN date(datetime(dPrior.sunset) + off) = date(datetime() + off)
+              THEN dPrior ELSE dToday END AS d
+    WITH p, d, m, f, off,
+         CASE WHEN m IS NULL THEN NULL
+              ELSE (1.0 - cos(radians(toFloat(m.phaseDegrees)))) / 2.0 END AS rowIllum,
+         (toFloat(f.cloudAt21) + toFloat(f.cloudAt22) + toFloat(f.cloudAt23) +
+          toFloat(f.cloudAt00) + toFloat(f.cloudAt01) + toFloat(f.cloudAt02) +
+          toFloat(f.cloudAt03)) / 7.0 AS meanCloud,
+         NOT d.astroDusk STARTS WITH '1970' AS trulyDark
+    WITH collect({p: p, d: d, m: m, f: f, off: off, rowIllum: rowIllum,
+                  meanCloud: meanCloud, trulyDark: trulyDark}) AS rows
+    WITH rows, reduce(x = NULL, r IN rows | coalesce(x, r.rowIllum)) AS globalIllum
+    UNWIND rows AS r
+    WITH r.p AS p, r.d AS d, r.m AS m, r.f AS f, r.off AS off,
+         r.meanCloud AS meanCloud, r.trulyDark AS trulyDark,
+         r.rowIllum IS NOT NULL AS moonKnownHere,
+         coalesce(r.rowIllum, globalIllum) AS illum
+    WITH p, d, m, f, off, meanCloud, trulyDark, moonKnownHere, illum,
+         round(100.0 * ((100.0 - meanCloud) / 100.0)
+                     * (1.0 - 0.65 * coalesce(illum, 0.0))
+                     * (CASE WHEN trulyDark THEN 1.0 ELSE 0.35 END)) AS score,
+         CASE WHEN trulyDark THEN datetime(d.astroDusk) ELSE datetime(d.nauticalDusk) END AS darkFrom,
+         datetime(d.astroDawn) + duration({days: 1}) AS darkUntil
+    RETURN p.name AS place,
+           p.postcode AS postcode,
+           score,
+           CASE WHEN NOT trulyDark THEN 'no astronomical night here tonight'
+                WHEN score >= 70 THEN 'excellent'
+                WHEN score >= 45 THEN 'worth going out'
+                WHEN score >= 20 THEN 'marginal'
+                ELSE 'stay in' END AS verdict,
+           round(meanCloud) AS meanCloudPct,
+           round(100.0 * illum) AS moonIlluminatedPct,
+           moonKnownHere AS moonFetchedForThisPlace,
+           toString(date(datetime(d.sunset) + off)) AS nightOfLocalDate,
+           substring(toString(darkFrom + off), 0, 16) AS darkFromLocal,
+           substring(toString(darkUntil + off), 0, 16) AS darkUntilLocal,
+           round(duration.inSeconds(darkFrom, darkUntil).seconds / 360.0) / 10.0 AS darkHours,
+           substring(toString(datetime(d.sunset) + off), 0, 16) AS sunsetLocal,
+           CASE WHEN m IS NULL THEN NULL
+                ELSE substring(toString(datetime(m.moonrise) + off), 0, 16) END AS moonriseLocal,
+           f.timezone AS timezone
+    ORDER BY score DESC, meanCloudPct ASC
+    LIMIT $limit
+- name: CloudThroughTheNight
+  description: Hour-by-hour cloud cover from 20:00 to 04:00 local at each place you track the weather for, with the clearest hour of the night picked out — for deciding WHEN to go out, not just whether.
+  params:
+    limit:
+      type: int
+      default: 10
+      description: "How many places to return, clearest night first."
+  cypher: |
+    MATCH (l:WeatherLocation)-[:HAS_SKY_FORECAST]->(f:SkyForecast)
+    WITH l, f, [{h: '20:00', c: toFloat(f.cloudAt20)}, {h: '21:00', c: toFloat(f.cloudAt21)},
+                {h: '22:00', c: toFloat(f.cloudAt22)}, {h: '23:00', c: toFloat(f.cloudAt23)},
+                {h: '00:00', c: toFloat(f.cloudAt00)}, {h: '01:00', c: toFloat(f.cloudAt01)},
+                {h: '02:00', c: toFloat(f.cloudAt02)}, {h: '03:00', c: toFloat(f.cloudAt03)},
+                {h: '04:00', c: toFloat(f.cloudAt04)}] AS hours
+    WITH l, f, hours, reduce(best = hours[0], x IN hours | CASE WHEN x.c < best.c THEN x ELSE best END) AS clearest
+    RETURN l.name AS place,
+           clearest.h AS clearestHourLocal,
+           clearest.c AS clearestHourCloudPct,
+           [x IN hours | x.c] AS cloudPctByHour,
+           round(reduce(s = 0.0, x IN hours | s + x.c) / 9.0) AS meanCloudPct,
+           toFloat(f.visibilityAt22) / 1000.0 AS visibilityKmAt22,
+           f.timezone AS timezone
+    ORDER BY meanCloudPct ASC
+    LIMIT $limit
+
+- name: MoonAtMyPlaces
+  description: The moon tonight over each place you track the weather for — phase, illuminated percentage, when it rises and sets, and how high it gets. A moon below the horizon all night is the observer's real question.
+  params:
+    limit:
+      type: int
+      default: 10
+      description: "How many places to return."
+  cypher: |
+    MATCH (l:WeatherLocation)-[:HAS_MOON]->(m:MoonTonight)
+    WITH l, m, (1.0 - cos(radians(toFloat(m.phaseDegrees)))) / 2.0 AS illum
+    RETURN l.name AS place,
+           round(100.0 * illum) AS illuminatedPct,
+           CASE WHEN toFloat(m.phaseDegrees) < 22.5 OR toFloat(m.phaseDegrees) >= 337.5 THEN 'new'
+                WHEN toFloat(m.phaseDegrees) < 67.5  THEN 'waxing crescent'
+                WHEN toFloat(m.phaseDegrees) < 112.5 THEN 'first quarter'
+                WHEN toFloat(m.phaseDegrees) < 157.5 THEN 'waxing gibbous'
+                WHEN toFloat(m.phaseDegrees) < 202.5 THEN 'full'
+                WHEN toFloat(m.phaseDegrees) < 247.5 THEN 'waning gibbous'
+                WHEN toFloat(m.phaseDegrees) < 292.5 THEN 'last quarter'
+                ELSE 'waning crescent' END AS phase,
+           round(toFloat(m.phaseDegrees)) AS phaseDegrees,
+           m.moonrise AS moonriseUtc,
+           m.moonset AS moonsetUtc,
+           CASE WHEN m.highMoonTime IS NULL OR m.highMoonTime = 'null' THEN NULL
+                ELSE m.highMoonTime END AS culminatesUtc,
+           toFloat(m.highMoonElevation) AS maxElevationDeg
+    ORDER BY illuminatedPct DESC
+    LIMIT $limit
+
+- name: IssPassesAtMyPlaces
+  description: Visible-quality ISS passes over the places you track the weather for in the next 48 hours — culminating 30 degrees or higher — highest first, with the compass bearings to look between.
+  params:
+    limit:
+      type: int
+      default: 20
+      description: "Maximum passes to return, highest culmination first."
+  cypher: |
+    MATCH (l:WeatherLocation)-[:HAS_ISS_PASS]->(p:IssPass)
+    RETURN l.name AS place,
+           p.start AS risesUtc,
+           p.tca AS highestUtc,
+           p.endsAt AS setsUtc,
+           round(toFloat(p.maxElevation)) AS maxElevationDeg,
+           round(toFloat(p.aosAzimuth)) AS risesBearing,
+           round(toFloat(p.losAzimuth)) AS setsBearing
+    ORDER BY maxElevationDeg DESC, risesUtc ASC
+    LIMIT $limit
+
+- name: UkIssPasses
+  description: Visible-quality ISS passes over the UK places you watch in the next 48 hours, highest first — the same answer as IssPassesAtMyPlaces over the UkPlace anchor.
+  params:
+    limit:
+      type: int
+      default: 20
+      description: "Maximum passes to return, highest culmination first."
+  cypher: |
+    MATCH (u:UkPlace)-[:HAS_ISS_PASS]->(p:IssPass)
+    RETURN u.name AS place,
+           p.start AS risesUtc,
+           p.tca AS highestUtc,
+           round(toFloat(p.maxElevation)) AS maxElevationDeg,
+           round(toFloat(p.aosAzimuth)) AS risesBearing,
+           round(toFloat(p.losAzimuth)) AS setsBearing
+    ORDER BY maxElevationDeg DESC, risesUtc ASC
+    LIMIT $limit
+
+- name: SpaceWeatherForecast
+  description: The planetary K index forecast — three-hour bins for the days ahead, strongest first, with the NOAA storm scale where there is one. Global, not per-place; for whether it means an aurora where you are, use AuroraWatch.
+  params:
+    limit:
+      type: int
+      default: 12
+      description: "How many three-hour bins to return, strongest first."
+  cypher: |
+    MATCH (l:WeatherLocation)-[:HAS_KP_FORECAST]->(k:KpForecast)
+    WHERE k.observed = 'predicted'
+    WITH DISTINCT k.timeTag AS timeTag, toFloat(k.kp) AS kp,
+         CASE WHEN k.noaaScale IS NULL OR k.noaaScale = 'null' THEN NULL
+              ELSE k.noaaScale END AS scale
+    RETURN timeTag AS binStartUtc,
+           kp,
+           coalesce(scale, 'none') AS stormScale,
+           CASE WHEN kp >= 8.0 THEN 'severe storm — aurora possible at mid latitudes'
+                WHEN kp >= 7.0 THEN 'strong storm — aurora possible around 50 degrees'
+                WHEN scale IS NOT NULL THEN 'storm ' + scale + ' — aurora at high latitudes'
+                ELSE 'quiet' END AS meaning
+    ORDER BY kp DESC, binStartUtc ASC
+    LIMIT $limit
+
+- name: AuroraWatch
+  description: Whether the forecast planetary K index is enough for an aurora at each place you track — the peak predicted Kp over the days ahead, judged against that place's own latitude. A "no" here is the normal and correct answer; the view exists so that a "yes" is not missed.
+  params:
+    limit:
+      type: int
+      default: 10
+      description: "How many places to return, closest to visible first."
+  cypher: |
+    MATCH (l:WeatherLocation)-[:HAS_KP_FORECAST]->(k:KpForecast)
+    WHERE k.observed = 'predicted'
+    WITH l, max(toFloat(k.kp)) AS peakKp
+    WITH l, peakKp, abs(toFloat(l.latitude)) AS absLat
+    WITH l, peakKp, absLat,
+         CASE WHEN absLat >= 65.0 THEN 3.0
+              WHEN absLat >= 60.0 THEN 4.0
+              WHEN absLat >= 55.0 THEN 5.5
+              WHEN absLat >= 50.0 THEN 7.0
+              WHEN absLat >= 45.0 THEN 8.0
+              ELSE 9.0 END AS kpNeeded
+    RETURN l.name AS place,
+           round(absLat * 10.0) / 10.0 AS latitude,
+           peakKp AS peakForecastKp,
+           kpNeeded AS kpNeededHere,
+           peakKp >= kpNeeded AS auroraPossible,
+           round((peakKp - kpNeeded) * 10.0) / 10.0 AS marginKp
+    ORDER BY marginKp DESC
+    LIMIT $limit
+
+- name: UkAuroraWatch
+  description: Whether the forecast planetary K index is enough for an aurora at each UK place you watch — peak predicted Kp against that place's own latitude. Britain is the only part of this world's estate a strong storm could realistically reach, which is why this view exists separately.
+  params:
+    limit:
+      type: int
+      default: 10
+      description: "How many places to return, closest to visible first."
+  cypher: |
+    MATCH (u:UkPlace)-[:HAS_KP_FORECAST]->(k:KpForecast)
+    WHERE k.observed = 'predicted'
+    WITH u, max(toFloat(k.kp)) AS peakKp
+    WITH u, peakKp, abs(toFloat(u.latitude)) AS absLat
+    WITH u, peakKp, absLat,
+         CASE WHEN absLat >= 65.0 THEN 3.0
+              WHEN absLat >= 60.0 THEN 4.0
+              WHEN absLat >= 55.0 THEN 5.5
+              WHEN absLat >= 50.0 THEN 7.0
+              WHEN absLat >= 45.0 THEN 8.0
+              ELSE 9.0 END AS kpNeeded
+    RETURN u.name AS place,
+           u.region AS region,
+           round(absLat * 10.0) / 10.0 AS latitude,
+           peakKp AS peakForecastKp,
+           kpNeeded AS kpNeededHere,
+           peakKp >= kpNeeded AS auroraPossible,
+           round((peakKp - kpNeeded) * 10.0) / 10.0 AS marginKp
+    ORDER BY marginKp DESC
+    LIMIT $limit
+
+- name: BestSkyTonight
+  description: The single best place to look up tonight, across EVERYTHING this world tracks — weather locations and UK places together, ranked by the same clear-sky-and-moon score. The one view to run when the question is just "should I bother, and where".
+  params:
+    limit:
+      type: int
+      default: 5
+      description: "How many places to return, best sky first."
+  cypher: |
+    MATCH (l:WeatherLocation)-[:HAS_DARK_WINDOW]->(dwT:DarkWindow)
+    MATCH (l)-[:HAS_PRIOR_DARK_WINDOW]->(dwP:DarkWindow)
+    MATCH (l)-[:HAS_SKY_FORECAST]->(fw:SkyForecast)
+    WITH collect({name: l.name, kind: 'weather', dT: dwT, dP: dwP, f: fw}) AS world
+    MATCH (u:UkPlace)-[:HAS_DARK_WINDOW]->(duT:DarkWindow)
+    MATCH (u)-[:HAS_PRIOR_DARK_WINDOW]->(duP:DarkWindow)
+    MATCH (u)-[:HAS_SKY_FORECAST]->(fu:SkyForecast)
+    WITH world, collect({name: u.name, kind: 'uk', dT: duT, dP: duP, f: fu}) AS uk
+    WITH world + uk AS everywhere
+    UNWIND everywhere AS r
+    WITH r, duration({seconds: toInteger(r.f.utcOffsetSeconds)}) AS off
+    WITH r, off,
+         CASE WHEN date(datetime(r.dP.sunset) + off) = date(datetime() + off)
+              THEN r.dP ELSE r.dT END AS d
+    WITH r, off, d,
+         (toFloat(r.f.cloudAt21) + toFloat(r.f.cloudAt22) + toFloat(r.f.cloudAt23) +
+          toFloat(r.f.cloudAt00) + toFloat(r.f.cloudAt01) + toFloat(r.f.cloudAt02) +
+          toFloat(r.f.cloudAt03)) / 7.0 AS meanCloud,
+         NOT d.astroDusk STARTS WITH '1970' AS trulyDark
+    RETURN r.name AS place,
+           r.kind AS trackedAs,
+           round(100.0 * ((100.0 - meanCloud) / 100.0)
+                       * (CASE WHEN trulyDark THEN 1.0 ELSE 0.35 END)) AS clearDarkScore,
+           round(meanCloud) AS meanCloudPct,
+           trulyDark AS astronomicalNight,
+           substring(toString((CASE WHEN trulyDark THEN datetime(d.astroDusk)
+                                    ELSE datetime(d.nauticalDusk) END) + off), 0, 16) AS darkFromLocal,
+           toString(date(datetime(d.sunset) + off)) AS nightOfLocalDate,
+           r.f.timezone AS timezone
+    ORDER BY clearDarkScore DESC, meanCloudPct ASC
+    LIMIT $limit

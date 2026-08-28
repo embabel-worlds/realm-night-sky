@@ -1,0 +1,25 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "NOAA SWPC Planetary K Index",
+    "version": "1.0.0",
+    "description": "The US Space Weather Prediction Center's planetary K index feed — three days observed and three days forecast, in three-hour bins. Free, keyless, no account. The feed is GLOBAL: Kp is a planetary index, and whether an aurora is visible from a given place is Kp judged against that place's geomagnetic latitude, which is the caller's job."
+  },
+  "servers": [{ "url": "https://services.swpc.noaa.gov" }],
+  "paths": {
+    "/products/noaa-planetary-k-index-forecast.json": {
+      "get": {
+        "operationId": "kpForecast",
+        "summary": "Planetary K index, observed and forecast, in three-hour bins",
+        "description": "A JSON array of objects: `time_tag` (UTC), `kp` (0-9), `observed` (`observed`, `estimated` or `predicted`), and `noaa_scale` (the G-scale storm level, null when quiet). Kp 5 is a minor storm, 7 strong, 9 extreme.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Array of three-hourly Kp readings and forecasts.",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object" } } } }
+          }
+        }
+      }
+    }
+  }
+}

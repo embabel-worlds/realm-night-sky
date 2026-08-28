@@ -1,0 +1,29 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "MET Norway Sunrise 3.0",
+    "version": "3.0.0",
+    "description": "The Norwegian Meteorological Institute's free, keyless sunrise/moon service. `moonToday` returns the moon's rise, set, culmination and PHASE ANGLE for a coordinate pair. The `date` parameter is optional: omitted, the service answers for today, which is what lets a producer with static arguments ask about tonight. MET Norway's terms of service require an identifying User-Agent, set on the API entry."
+  },
+  "servers": [{ "url": "https://api.met.no" }],
+  "paths": {
+    "/weatherapi/sunrise/3.0/moon": {
+      "get": {
+        "operationId": "moonToday",
+        "summary": "Moonrise, moonset, culmination and phase angle for a coordinate pair (defaults to today)",
+        "description": "GeoJSON Feature whose `properties` carry `moonrise.time`, `moonrise.azimuth`, `moonset.time`, `moonset.azimuth`, `high_moon` (culmination time and disc-centre elevation) and `moonphase` — the phase as an ANGLE IN DEGREES, 0 new, 90 first quarter, 180 full, 270 last quarter. Illuminated fraction is (1 - cos(phase))/2, computed by the caller.",
+        "parameters": [
+          { "name": "lat", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Latitude, decimal degrees." },
+          { "name": "lon", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Longitude, decimal degrees." },
+          { "name": "date", "in": "query", "required": false, "schema": { "type": "string" }, "description": "ISO date. OMIT for today — that is the whole point of this operation." }
+        ],
+        "responses": {
+          "200": {
+            "description": "GeoJSON Feature with a `properties` object.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    }
+  }
+}

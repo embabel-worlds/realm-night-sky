@@ -1,0 +1,30 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "G7VRD Satellite Passes",
+    "version": "1.0.0",
+    "description": "Pass predictions for the International Space Station over a coordinate pair, propagated from current TLEs. Free, keyless, and self-declared ALPHA — treat a failure as an outage, never as 'no passes'. Latitude and longitude are PATH segments, not query parameters."
+  },
+  "servers": [{ "url": "https://api.g7vrd.co.uk" }],
+  "paths": {
+    "/v1/satellite-passes/25544/{lat}/{lon}.json": {
+      "get": {
+        "operationId": "issPasses",
+        "summary": "Upcoming ISS passes over a coordinate pair",
+        "description": "Returns `{passes: [...]}`, each pass carrying `start`, `tca` (time of closest approach), `end`, `aos_azimuth` and `los_azimuth` (compass bearings where it rises and sets, degrees) and `max_elevation` (degrees above the horizon at culmination). 25544 is the ISS NORAD catalogue number.",
+        "parameters": [
+          { "name": "lat", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Latitude, decimal degrees." },
+          { "name": "lon", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Longitude, decimal degrees." },
+          { "name": "hours", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Look-ahead window in hours. Default 48." },
+          { "name": "min_elevation", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Minimum culmination elevation in degrees. Default 30 — a pass lower than that is not worth going outside for." }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pass predictions; `passes` may legitimately be empty.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    }
+  }
+}

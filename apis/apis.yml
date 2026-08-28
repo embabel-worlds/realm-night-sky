@@ -1,0 +1,55 @@
+# Five keyless, unauthenticated sources. Every spec is VENDORED next to this
+# file and deliberately NARROW — only the operations the producers actually
+# call. None of them has an `auth:` entry and none has a `token-env:`, so the
+# realm works the moment it is installed with nothing to configure.
+
+# MET Norway's sunrise/moon service. `date` is optional and defaults to today,
+# which is what makes it usable from a producer: producer args are static, so a
+# source that required a date could not be asked about tonight.
+# MET Norway's terms require a User-Agent that identifies the caller.
+- url: met-no-sunrise.json
+  name: met_no
+  type: openapi
+  auth: none
+  headers:
+    User-Agent: "embabel-realm-night-sky/0.1 (https://embabel.com)"
+  operation-ids:
+    - moonToday
+
+# Astronomical twilight. MET Norway's v3 sun endpoint gives sunrise and sunset
+# but no twilights, and astronomical dusk — not sunset — is when observing
+# starts, so this second source earns its place.
+- url: sunrise-sunset.json
+  name: sunrise_sunset
+  type: openapi
+  auth: none
+  operation-ids:
+    - twilightToday
+
+# Hourly cloud through the coming night. Same provider as realm-weather's
+# forecast, requested for a different purpose and projected differently.
+- url: open-meteo-sky.json
+  name: open_meteo_sky
+  type: openapi
+  auth: none
+  operation-ids:
+    - nightCloud
+
+# NOAA Space Weather Prediction Center's planetary K index: three days
+# observed, three days forecast, in three-hour bins.
+- url: swpc.json
+  name: swpc
+  type: openapi
+  auth: none
+  operation-ids:
+    - kpForecast
+
+# ISS pass predictions for a coordinate pair. An ALPHA service, and the only
+# keyless pass predictor there is — treat an outage as an outage, not as
+# "no passes".
+- url: iss-passes.json
+  name: iss_passes
+  type: openapi
+  auth: none
+  operation-ids:
+    - issPasses

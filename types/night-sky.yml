@@ -1,0 +1,173 @@
+# Five VIRTUAL types — fetched per query, rolled back after it. This realm
+# persists nothing of its own: it is an enrichment layer over any node that
+# carries `latitude` and `longitude`.
+#
+# EVERY type joins from BOTH anchors — realm-weather's WeatherLocation and
+# realm-uk-streets' UkPlace. That is the point of the realm. Those two realms
+# already know where you care about; this one only had to know what the sky
+# does above a coordinate. With either realm absent its joins lie dormant.
+# To reach a third coordinate-bearing type, copy a `virtualJoins` entry and
+# change `anchorLabel`.
+
+# When the sky is actually dark tonight.
+#   MATCH (l:WeatherLocation)-[:HAS_DARK_WINDOW]->(d:DarkWindow) RETURN d.astroDusk
+- name: DarkWindow
+  description: "One night's astronomical darkness at a place, from sunrise-sunset.org — sunset, and the civil, nautical and astronomical twilight boundaries, all UTC. Observing starts at `astroDusk`, not at sunset. A boundary of `1970-01-01T00:00:00+00:00` means that twilight does not occur here that day — a summer night above about 50 degrees never gets astronomically dark — so it is a real answer, not a fetch failure: test with `d.astroDusk STARTS WITH '1970'`. TWO nights are reachable from every place and you must choose between them: the source answers for a UTC date, and west of Greenwich the night a person is standing in belongs to YESTERDAY's UTC date. HAS_DARK_WINDOW is today's UTC date and HAS_PRIOR_DARK_WINDOW is yesterday's; tonight is the one whose sunset falls on the place's own LOCAL date, which is also the night SkyForecast's hours cover. The views do this; a hand-written query that takes HAS_DARK_WINDOW alone will silently describe the wrong night for a third of the planet."
+  virtualJoins:
+    - anchorLabel: WeatherLocation
+      relationship: HAS_DARK_WINDOW
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: darkWindow
+      description: "The darkness window for TODAY's UTC date at a tracked place — pair it with HAS_PRIOR_DARK_WINDOW and pick by local date."
+    - anchorLabel: WeatherLocation
+      relationship: HAS_PRIOR_DARK_WINDOW
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: darkWindowPrior
+      description: "The darkness window for YESTERDAY's UTC date — which is TONIGHT for any place whose local date is a day behind UTC."
+    - anchorLabel: UkPlace
+      relationship: HAS_DARK_WINDOW
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: darkWindow
+      description: "The darkness window for TODAY's UTC date at a watched UK place — pair it with HAS_PRIOR_DARK_WINDOW and pick by local date."
+    - anchorLabel: UkPlace
+      relationship: HAS_PRIOR_DARK_WINDOW
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: darkWindowPrior
+      description: "The darkness window for YESTERDAY's UTC date at a watched UK place."
+  properties:
+    sunset:
+      description: "The sunset this night begins with, UTC ISO-8601. IDENTITY — a night is identified by the sunset that opens it, which is unique per place and per date and, unlike astroDusk, never degenerates to a 1970 placeholder. NOT when observing starts."
+      metadata:
+        identity: "true"
+    key: "The coordinate pair this was fetched for — the join link."
+    sunrise: "Sunrise on the fetched date, UTC ISO-8601 — the MORNING before this night, not the morning after it."
+    solarNoon: "Solar noon today, UTC ISO-8601."
+    dayLengthSeconds: "Length of daylight today, seconds."
+    civilDusk: "End of civil twilight tonight, UTC — the brightest stars appear."
+    nauticalDusk: "End of nautical twilight tonight, UTC — the horizon becomes indistinct."
+    astroDusk: "End of astronomical twilight tonight, UTC — the sky is as dark as it will get. Observing starts HERE. `1970-...` means no astronomical night today."
+    astroDawn: "Start of astronomical twilight on the fetched date's MORNING, UTC — before this night, not after it. The night closes at roughly this time PLUS ONE DAY, which is what the views compute; the day-to-day drift is a minute or two."
+
+# How much moon is in the way.
+- name: MoonTonight
+  description: "The moon at a place tonight, from MET Norway — rise, set, culmination, and the phase as an ANGLE IN DEGREES. Reached from WeatherLocation or UkPlace via HAS_MOON. `phaseDegrees` is 0 at new moon, 90 first quarter, 180 full, 270 last quarter; the ILLUMINATED FRACTION is (1 - cos(radians(phaseDegrees))) / 2, which the views compute — there is no illumination property to read directly. A full moon washes out everything fainter than a bright planet."
+  virtualJoins:
+    - anchorLabel: WeatherLocation
+      relationship: HAS_MOON
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: moonTonight
+      description: "The moon over a tracked place tonight — compute illumination from phaseDegrees; a high fraction means a washed-out sky."
+    - anchorLabel: UkPlace
+      relationship: HAS_MOON
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: moonTonight
+      description: "The moon over a watched UK place tonight — compute illumination from phaseDegrees."
+  properties:
+    key:
+      description: "The coordinate pair this was fetched for. Identity of the transient node."
+      metadata:
+        identity: "true"
+    phaseDegrees: "Phase angle in DEGREES: 0 new, 90 first quarter, 180 full, 270 last quarter. Illuminated fraction = (1 - cos(radians(phaseDegrees))) / 2."
+    moonrise: "Moonrise, UTC ISO-8601 — may be null on a day the moon does not rise."
+    moonriseAzimuth: "Compass bearing of moonrise, degrees."
+    moonset: "Moonset, UTC ISO-8601 — may be null."
+    moonsetAzimuth: "Compass bearing of moonset, degrees."
+    highMoonTime: "Culmination, UTC ISO-8601 — when the moon is highest, and most in the way."
+    highMoonElevation: "Disc-centre elevation at culmination, degrees. Negative means the moon never clears the horizon today, which is good news for observing."
+
+# What the cloud does through the dark hours.
+- name: SkyForecast
+  description: "Cloud cover hour by hour through tonight at a place, from Open-Meteo, as nine LOCAL-hour readings from 20:00 tonight to 04:00 tomorrow. Reached from WeatherLocation or UkPlace via HAS_SKY_FORECAST. Every value is a percentage as a string — ORDER BY and arithmetic go through toFloat(). One record per place, not one per hour: the hours are properties, so a view can average them or pick the clearest without a fan-out."
+  virtualJoins:
+    - anchorLabel: WeatherLocation
+      relationship: HAS_SKY_FORECAST
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: nightCloudHours
+      description: "Cloud through tonight at a tracked place — average cloudAt21..cloudAt03 for 'how good is the sky tonight'."
+    - anchorLabel: UkPlace
+      relationship: HAS_SKY_FORECAST
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: nightCloudHours
+      description: "Cloud through tonight at a watched UK place — average cloudAt21..cloudAt03."
+  properties:
+    key:
+      description: "The coordinate pair this was fetched for. Identity of the transient node."
+      metadata:
+        identity: "true"
+    timezone: "The place's own timezone, resolved by Open-Meteo — the hours below are local to it."
+    utcOffsetSeconds: "The place's offset from UTC in seconds. Needed to answer 'what is the local date here', which is how a query picks the right DarkWindow."
+    localDayStart: "Local midnight at the start of the day these hours belong to, e.g. `2026-08-28T00:00`. Its date IS the night's local date, read straight off the same array the cloud figures come from rather than recomputed."
+    cloudAt20: "Cloud cover at 20:00 local tonight, percent."
+    cloudAt21: "Cloud cover at 21:00 local tonight, percent."
+    cloudAt22: "Cloud cover at 22:00 local tonight, percent."
+    cloudAt23: "Cloud cover at 23:00 local tonight, percent."
+    cloudAt00: "Cloud cover at midnight local, percent."
+    cloudAt01: "Cloud cover at 01:00 local, percent."
+    cloudAt02: "Cloud cover at 02:00 local, percent."
+    cloudAt03: "Cloud cover at 03:00 local, percent."
+    cloudAt04: "Cloud cover at 04:00 local, percent."
+    visibilityAt22: "Horizontal visibility at 22:00 local, metres — haze the cloud figure does not capture."
+
+# When the ISS goes over.
+- name: IssPass
+  description: "An upcoming visible-quality pass of the International Space Station over a place — culminating at 30 degrees or higher, within the next 48 hours, from G7VRD. Reached from WeatherLocation or UkPlace via HAS_ISS_PASS. Times are UTC. `maxElevation` is degrees above the horizon at closest approach: 80+ passes overhead, 30 is low but findable. An empty result is a real answer; a warning on the result is an outage, and the two are not the same. The source allows only ten requests a minute; the producer declares that rate so the planner can pace against it. If it is exceeded anyway the affected places come back with a PRODUCER_ERROR warning rather than silently — a partial sky that says it is partial, which is the failure worth having. Capping the anchors instead was tried and is worse: it refuses the whole query rather than answering most of it."
+  virtualJoins:
+    - anchorLabel: WeatherLocation
+      relationship: HAS_ISS_PASS
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: issPasses
+      description: "ISS passes over a tracked place in the next 48h — ORDER BY toFloat(p.maxElevation) DESC for the best one."
+    - anchorLabel: UkPlace
+      relationship: HAS_ISS_PASS
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: issPasses
+      description: "ISS passes over a watched UK place in the next 48h — ORDER BY toFloat(p.maxElevation) DESC."
+  properties:
+    start:
+      description: "Acquisition of signal — when the ISS clears the horizon, UTC ISO-8601. Identity: pass times are millisecond-precise and location-dependent, so two places do not collide."
+      metadata:
+        identity: "true"
+    key: "The coordinate pair whose horizon this pass was computed for — the join link."
+    tca: "Time of closest approach, UTC — the moment it is highest and brightest."
+    endsAt: "Loss of signal, UTC."
+    maxElevation: "Elevation above the horizon at closest approach, degrees."
+    aosAzimuth: "Compass bearing where it rises, degrees — 0 north, 90 east, 180 south, 270 west."
+    losAzimuth: "Compass bearing where it sets, degrees."
+
+# Whether the sun is throwing anything at us.
+- name: KpForecast
+  description: "A three-hour bin of the planetary K index, observed or forecast, from NOAA SWPC. Reached from WeatherLocation or UkPlace via HAS_KP_FORECAST. Kp is GLOBAL — the same rows attach to every place — so an aurora answer is Kp judged against the place's own latitude, which the AuroraWatch view does. Filter `k.observed = 'predicted'` for the forecast half. Kp 5 is a minor storm, 7 strong, 9 extreme; at 50 degrees of latitude you need about 7, at 35 about 8 or 9."
+  virtualJoins:
+    - anchorLabel: WeatherLocation
+      relationship: HAS_KP_FORECAST
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: kpForecast
+      maxFanoutTotal: 2000
+      description: "The planetary K index forecast, attached to a tracked place so it can be judged against that place's latitude."
+    - anchorLabel: UkPlace
+      relationship: HAS_KP_FORECAST
+      producerKeyFields: [latitude, longitude]
+      recordKeyField: key
+      producer: kpForecast
+      maxFanoutTotal: 2000
+      description: "The planetary K index forecast, attached to a watched UK place so it can be judged against that place's latitude."
+  properties:
+    timeTag:
+      description: "Start of the three-hour bin, UTC. Identity — Kp is global, so one bin reached from three places is ONE node with three HAS_KP_FORECAST edges, exactly as a shared earthquake is."
+      metadata:
+        identity: "true"
+    key: "The coordinate pair whose fetch materialised this bin. The bin is global; to know which places it reaches, follow the EDGE, not this field."
+    kp: "Planetary K index for the bin, 0-9."
+    observed: "`observed`, `estimated` or `predicted`. The forecast half is `predicted`."
+    noaaScale: "NOAA G-scale storm level for the bin, null when quiet."
