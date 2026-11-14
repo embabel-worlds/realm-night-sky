@@ -2,17 +2,25 @@
 
 The sky above the places you already track.
 
-Install it beside realm-weather and realm-uk-streets and every place those
-realms hold quietly grows a night: when astronomical darkness actually falls,
-how much moon is in the way, how cloudy it will be hour by hour through the
-dark, when the ISS crosses over, and what the planetary K index says about
-aurora at that latitude.
+Install it beside [realm-uk-streets](https://github.com/embabel-worlds/realm-uk-streets)
+and every `UkPlace` you watch there quietly grows a night: when astronomical
+darkness actually falls, how much moon is in the way, how cloudy it will be
+hour by hour through the dark, when the ISS crosses over, and what the
+planetary K index says about aurora at that latitude.
 
 ```cypher
-MATCH (l:WeatherLocation)-[:HAS_DARK_WINDOW]->(d:DarkWindow)
-MATCH (l)-[:HAS_SKY_FORECAST]->(f:SkyForecast)
-RETURN l.name, d.astroDusk, f.cloudAt22
+MATCH (u:UkPlace)-[:HAS_DARK_WINDOW]->(d:DarkWindow)
+MATCH (u)-[:HAS_SKY_FORECAST]->(f:SkyForecast)
+RETURN u.name, d.astroDusk, f.cloudAt22
 ```
+
+> **Which views answer today.** The joins are also declared from a
+> `WeatherLocation` anchor, but no published realm provides one, so the views
+> written over it — `SkyTonight`, `CloudThroughTheNight`, `MoonAtMyPlaces`,
+> `IssPassesAtMyPlaces`, `SpaceWeatherForecast`, `AuroraWatch` and
+> `BestSkyTonight` — are refused on every current install. Use the UK views:
+> `UkSkyTonight`, `UkIssPasses` and `UkAuroraWatch`. This realm does not
+> depend on anything except realm-uk-streets to be useful.
 
 Nothing is stored. Five keyless sources are joined **on demand** onto
 coordinates other realms already hold, so this is a pure enrichment layer — and

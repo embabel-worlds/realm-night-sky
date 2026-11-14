@@ -6,9 +6,15 @@ description: Answer questions about observing conditions, the moon, ISS passes, 
 # The night sky over this world's places
 
 This realm adds no places of its own. It attaches the sky to places other
-realms already hold — `WeatherLocation` from realm-weather and `UkPlace` from
-realm-uk-streets — so every answer below is about somewhere the user already
-told this world they care about.
+realms already hold — `UkPlace` from realm-uk-streets — so every answer below
+is about somewhere the user already told this world they care about.
+
+**Use the Uk\* views.** The joins are also declared from a `WeatherLocation`
+anchor, but no published realm provides that label, so every view over it
+(`SkyTonight`, `CloudThroughTheNight`, `MoonAtMyPlaces`, `IssPassesAtMyPlaces`,
+`SpaceWeatherForecast`, `AuroraWatch`, `BestSkyTonight`) is refused on a world
+that lacks it. Reach for `UkSkyTonight`, `UkIssPasses` and `UkAuroraWatch`
+first; never tell the user to install a weather realm — there is none to install.
 
 ## Run a view. Do not hand-write the Cypher.
 

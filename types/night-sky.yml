@@ -2,10 +2,12 @@
 # persists nothing of its own: it is an enrichment layer over any node that
 # carries `latitude` and `longitude`.
 #
-# EVERY type joins from BOTH anchors — realm-weather's WeatherLocation and
-# realm-uk-streets' UkPlace. That is the point of the realm. Those two realms
-# already know where you care about; this one only had to know what the sky
-# does above a coordinate. With either realm absent its joins lie dormant.
+# EVERY type joins from BOTH anchors — WeatherLocation and realm-uk-streets'
+# UkPlace. That is the point of the realm: the anchor realm already knows where
+# you care about; this one only had to know what the sky does above a
+# coordinate. With an anchor's realm absent its joins lie dormant. No published
+# realm declares WeatherLocation today, so in practice UkPlace is the anchor
+# that answers, and views naming WeatherLocation are refused, not empty.
 # To reach a third coordinate-bearing type, copy a `virtualJoins` entry and
 # change `anchorLabel`.
 

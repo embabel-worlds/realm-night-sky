@@ -26,8 +26,8 @@
   operation-ids:
     - twilightToday
 
-# Hourly cloud through the coming night. Same provider as realm-weather's
-# forecast, requested for a different purpose and projected differently.
+# Hourly cloud through the coming night. Open-Meteo's forecast API, requested
+# for a different purpose and projected differently from a weather forecast.
 - url: open-meteo-sky.json
   name: open_meteo_sky
   type: openapi

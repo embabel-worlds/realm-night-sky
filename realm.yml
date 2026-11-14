@@ -1,8 +1,7 @@
 name: realm-night-sky
 description: |
-  The sky above your places. Every place you already track — a
-  realm-weather WeatherLocation or a realm-uk-streets UkPlace — quietly
-  grows a night: when astronomical darkness actually falls, how much moon
+  The sky above your places. Every UK place you watch in realm-uk-streets
+  (a UkPlace) quietly grows a night: when astronomical darkness actually falls, how much moon
   is in the way, how cloudy it will be hour by hour through the dark,
   when the ISS crosses over, and what the planetary K index says about
   aurora at that latitude.
@@ -10,7 +9,10 @@ description: |
   Nothing here is stored. Five keyless sources are joined ON DEMAND onto
   coordinates that other realms already hold, so the realm is a pure
   enrichment layer: install it and "where should I point a telescope
-  tonight" becomes a saved view over places you never re-entered.
+  tonight" becomes a saved view over places you never re-entered. Install
+  it beside realm-uk-streets and use the Uk* views (UkSkyTonight,
+  UkIssPasses, UkAuroraWatch); the joins and views over a WeatherLocation
+  anchor wait on a realm that is not published, and are refused until one is.
 
   Ships the Observatory app (`apps/the-observatory.html`) — the same ground
   seen rather than queried: tonight ranked across every tracked place, the
