@@ -23,7 +23,7 @@ description: |
   Open-Meteo (hourly cloud through the night), NOAA SWPC (planetary K
   index forecast), and G7VRD (ISS pass predictions). No API keys, no
   accounts, no configuration.
-version: 0.1.1
+version: 0.1.2
 author: rod
 category: science
 tags:
